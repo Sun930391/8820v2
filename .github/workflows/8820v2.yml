@@ -34,10 +34,20 @@ jobs:
           wget -O toolchain.tar.xz ${TOOLCHAIN_URL}
           sudo mkdir -p /opt
           sudo tar -xJf toolchain.tar.xz -C /opt/
-          echo "TOOLCHAIN_PATH=/opt/${{ env.TOOLCHAIN }}" >> $GITHUB_ENV
+          # 自动检测工具链的实际 bin 目录
+          TOOLCHAIN_BASE=$(find /opt/mipsel-linux-musl -type d -name "bin" -exec test -f {}/mipsel-linux-musl-gcc \; -print -quit 2>/dev/null || echo "")
+          if [ -n "$TOOLCHAIN_BASE" ]; then
+            REAL_ROOT=$(dirname "$TOOLCHAIN_BASE")
+            echo "REAL_TOOLCHAIN_ROOT=$REAL_ROOT" >> $GITHUB_ENV
+            echo "Found toolchain at: $REAL_ROOT"
+          else
+            echo "Warning: Could not locate mipsel-linux-musl-gcc, using default path."
+            echo "REAL_TOOLCHAIN_ROOT=/opt/mipsel-linux-musl" >> $GITHUB_ENV
+          fi
+          # 设置 PATH 为实际路径
+          echo "TOOLCHAIN_PATH=${REAL_ROOT}" >> $GITHUB_ENV
 
-      # 新增：修复 queue.h
-      - name: Fix missing sys/queue.h
+      - name: Fix sys/queue.h
         run: |
           TARGET_DIR="/opt/mipsel-linux-musl/mipsel-linux-musl/sysroot/usr/include/sys"
           sudo mkdir -p "$TARGET_DIR"
@@ -45,24 +55,27 @@ jobs:
             echo "Creating queue.h from system header..."
             sudo cp /usr/include/sys/queue.h "$TARGET_DIR/" 2>/dev/null || sudo touch "$TARGET_DIR/queue.h"
           fi
-          echo "queue.h is ready."
 
-      - name: Create .config in Both Locations
+      - name: Create .config with Correct Toolchain Path
         run: |
+          # 使用检测到的工具链根目录
+          TOOLCHAIN_ROOT="${REAL_TOOLCHAIN_ROOT:-/opt/mipsel-linux-musl}"
+          echo "Using toolchain root: $TOOLCHAIN_ROOT"
+          
           mkdir -p trunk/configs/templates
           TEMPLATE="trunk/configs/templates/${{ env.TARGET_DEVICE }}.config"
           if [ ! -f "$TEMPLATE" ]; then
-            cat << 'EOF' > "$TEMPLATE"
+            cat << EOF > "$TEMPLATE"
           CONFIG_FIRMWARE_PRODUCT_ID=ZTE-E8820V2
           CONFIG_LINUXDIR=linux-4.4.x
           CONFIG_CROSS_COMPILE=mipsel-linux-musl
-          CONFIG_CROSS_COMPILER_ROOT=/opt/mipsel-linux-musl
+          CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_ROOT
           EOF
           fi
 
-          cat << 'EOF' > .config
+          cat << EOF > .config
           CONFIG_CROSS_COMPILE=mipsel-linux-musl
-          CONFIG_CROSS_COMPILER_ROOT=/opt/mipsel-linux-musl
+          CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_ROOT
           CONFIG_LINUXDIR=linux-4.4.x
           CONFIG_FIRMWARE_PRODUCT_ID=ZTE-E8820V2
           CONFIG_VENDOR=Ralink
