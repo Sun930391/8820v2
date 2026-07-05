@@ -1,12 +1,12 @@
 name: Build Custom Padavan for ZTE-E8820V2
 
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
 
 env:
   FIRMWARE_AUTHOR: YourName
   TARGET_DEVICE: ZTE-E8820V2
-  TOOLCHAIN: mipsel-linux-musl  # 使用 musl 工具链，与您 xray 兼容性更好
+  TOOLCHAIN: mipsel-linux-musl
   TOOLCHAIN_URL: https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz
 
 jobs:
@@ -40,14 +40,15 @@ jobs:
         run: |
           CONFIG_FILE="trunk/configs/templates/${{ env.TARGET_DEVICE }}.config"
           
-          # 确保配置文件存在
           if [ ! -f "$CONFIG_FILE" ]; then
             echo "Error: Configuration file $CONFIG_FILE not found!"
             exit 1
           fi
 
-          # 追加 USB、存储、调制解调器和 PPP 支持
+          # 追加所有需要的配置，包括内置 xray 的启用
           cat << EOF >> "$CONFIG_FILE"
+          # xray (built-in)
+          CONFIG_FIRMWARE_INCLUDE_XRAY=y
           # USB Storage Support
           CONFIG_USB_SUPPORT=y
           CONFIG_USB_OHCI=y
@@ -70,28 +71,11 @@ jobs:
           CONFIG_FIRMWARE_INCLUDE_PPPD=y
           CONFIG_FIRMWARE_INCLUDE_CHAT=y
           EOF
-          
-          echo "Configuration appended to $CONFIG_FILE"
-
-      - name: Download and Integrate xray
-        run: |
-          # 下载 xray
-          XRAY_URL="https://github.com/Sun930391/padavan-4.4/raw/refs/heads/main/xray"
-          wget -O /tmp/xray ${XRAY_URL}
-          chmod +x /tmp/xray
-          
-          # 修改编译脚本，在打包前将 xray 复制到 romfs/usr/bin/
-          cd trunk
-          # 在 build_firmware_modify 中，于 make 命令后插入复制操作
-          sed -i '/^[[:space:]]*make[[:space:]]/a \\tcp /tmp/xray $${ROMFSDIR}/usr/bin/\\n\\tchmod 755 $${ROMFSDIR}/usr/bin/xray' build_firmware_modify
-          cd ..
 
       - name: Build Firmware
         run: |
-          # 使用 Make 命令直接编译，并指定工具链路径
           export PATH=${TOOLCHAIN_PATH}/bin:${PATH}
           cd trunk
-          # 清理并编译（假设 Makefile 支持以 TARGET 为参数）
           make ${{ env.TARGET_DEVICE }}
           cd ..
 
