@@ -36,7 +36,7 @@ jobs:
           sudo tar -xJf toolchain.tar.xz -C /opt/
           echo "TOOLCHAIN_PATH=/opt/${{ env.TOOLCHAIN }}" >> $GITHUB_ENV
 
-      - name: Customize Configuration (Enable USB, Modem, PPP & xray)
+      - name: Customize Configuration Template (Enable USB, Modem, PPP & xray)
         run: |
           CONFIG_FILE="trunk/configs/templates/${{ env.TARGET_DEVICE }}.config"
           
@@ -45,7 +45,7 @@ jobs:
             exit 1
           fi
 
-          # 追加所有需要的配置，包括内置 xray 的启用
+          # 追加配置到模板文件
           cat << EOF >> "$CONFIG_FILE"
           # xray (built-in)
           CONFIG_FIRMWARE_INCLUDE_XRAY=y
@@ -71,6 +71,38 @@ jobs:
           CONFIG_FIRMWARE_INCLUDE_PPPD=y
           CONFIG_FIRMWARE_INCLUDE_CHAT=y
           EOF
+
+      - name: Run Configure Script
+        run: |
+          cd trunk
+          # 运行配置脚本，指定目标机型（会自动生成 .config）
+          ./configure ${{ env.TARGET_DEVICE }}
+          cd ..
+
+      - name: Verify and Finalize .config (Ensure Options Persist)
+        run: |
+          cd trunk
+          # 检查 .config 是否已生成，并再次确保关键选项被启用（防止被覆盖）
+          if [ ! -f ".config" ]; then
+            echo "Error: .config was not generated!"
+            exit 1
+          fi
+          # 再次追加关键配置，确保它们生效
+          cat << EOF >> .config
+          CONFIG_FIRMWARE_INCLUDE_XRAY=y
+          CONFIG_USB_SERIAL=y
+          CONFIG_USB_SERIAL_OPTION=y
+          CONFIG_USB_SERIAL_WWAN=y
+          CONFIG_USB_SERIAL_QCARRIER=y
+          CONFIG_PPP=y
+          CONFIG_PPP_ASYNC=y
+          CONFIG_PPP_SYNC_TTY=y
+          CONFIG_PPP_DEFLATE=y
+          CONFIG_PPP_MPPE=y
+          CONFIG_FIRMWARE_INCLUDE_PPPD=y
+          CONFIG_FIRMWARE_INCLUDE_CHAT=y
+          EOF
+          cd ..
 
       - name: Build Firmware
         run: |
