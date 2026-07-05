@@ -1,102 +1,117 @@
-name: Build Padavan for ZTE-E8820V2 with xray & USB Modem
+name: Build Custom Padavan for ZTE-E8820V2
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发
+
+env:
+  FIRMWARE_AUTHOR: YourName
+  TARGET_DEVICE: ZTE-E8820V2
+  TOOLCHAIN: mipsel-linux-musl  # 使用 musl 工具链，与您 xray 兼容性更好
+  TOOLCHAIN_URL: https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    name: Build Firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 1
 
-      - name: Install dependencies
+      - name: Install Build Dependencies
         run: |
-          sudo apt update
-          sudo apt install -y unzip libtool-bin curl cmake gperf gawk flex bison nano xxd \
-            fakeroot kmod cpio git python3-docutils gettext automake autopoint \
-            texinfo build-essential help2man pkg-config zlib1g-dev libgmp3-dev \
-            libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget libc-dev-bin
+          sudo apt-get update
+          sudo apt-get install -y \
+            bison flex gperf help2man libtool-bin texinfo python3-docutils autopoint gettext \
+            autoconf automake liblzma-dev libltdl-dev liblzo2-dev jq ccache wget
 
-      - name: Prepare toolchain
+      - name: Prepare Toolchain
         run: |
-          cd toolchain-mipsel
-          sh dl_toolchain.sh
-          cd ..
+          wget -O toolchain.tar.xz ${TOOLCHAIN_URL}
+          sudo mkdir -p /opt
+          sudo tar -xJf toolchain.tar.xz -C /opt/
+          echo "TOOLCHAIN_PATH=/opt/${{ env.TOOLCHAIN }}" >> $GITHUB_ENV
 
-      - name: Customize ZTE-E8820V2 config (enable USB, storage, modem & PPP)
+      - name: Customize Configuration (Enable USB, Modem, PPP & xray)
         run: |
-          cd trunk/configs/templates/
-          # 确保使用正确的配置文件名
-          echo "CONFIG_USB_SUPPORT=y" >> ZTE-E8820V2.config
-          echo "CONFIG_USB_OHCI=y" >> ZTE-E8820V2.config
-          echo "CONFIG_USB_EHCI=y" >> ZTE-E8820V2.config
-          echo "CONFIG_USB_XHCI=y" >> ZTE-E8820V2.config
-          echo "CONFIG_USB_STORAGE=y" >> ZTE-E8820V2.config
-          echo "CONFIG_FIRMWARE_INCLUDE_NTFS_3G=y" >> ZTE-E8820V2.config
-          echo "CONFIG_FIRMWARE_INCLUDE_EXFAT=y" >> ZTE-E8820V2.config
-          echo "CONFIG_FIRMWARE_INCLUDE_SMBD36=y" >> ZTE-E8820V2.config
-          echo "CONFIG_USB_SERIAL=y" >> ZTE-E8820V2.config
-          echo "CONFIG_USB_SERIAL_OPTION=y" >> ZTE-E8820V2.config
-          echo "CONFIG_USB_SERIAL_WWAN=y" >> ZTE-E8820V2.config
-          echo "CONFIG_USB_SERIAL_QCARRIER=y" >> ZTE-E8820V2.config
-          echo "CONFIG_PPP=y" >> ZTE-E8820V2.config
-          echo "CONFIG_PPP_ASYNC=y" >> ZTE-E8820V2.config
-          echo "CONFIG_PPP_SYNC_TTY=y" >> ZTE-E8820V2.config
-          echo "CONFIG_PPP_DEFLATE=y" >> ZTE-E8820V2.config
-          echo "CONFIG_PPP_MPPE=y" >> ZTE-E8820V2.config
-          echo "CONFIG_FIRMWARE_INCLUDE_PPPD=y" >> ZTE-E8820V2.config
-          echo "CONFIG_FIRMWARE_INCLUDE_CHAT=y" >> ZTE-E8820V2.config
-          cd ../../..
+          CONFIG_FILE="trunk/configs/templates/${{ env.TARGET_DEVICE }}.config"
+          
+          # 确保配置文件存在
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "Error: Configuration file $CONFIG_FILE not found!"
+            exit 1
+          fi
 
-      - name: Download xray
+          # 追加 USB、存储、调制解调器和 PPP 支持
+          cat << EOF >> "$CONFIG_FILE"
+          # USB Storage Support
+          CONFIG_USB_SUPPORT=y
+          CONFIG_USB_OHCI=y
+          CONFIG_USB_EHCI=y
+          CONFIG_USB_XHCI=y
+          CONFIG_USB_STORAGE=y
+          CONFIG_FIRMWARE_INCLUDE_NTFS_3G=y
+          CONFIG_FIRMWARE_INCLUDE_EXFAT=y
+          CONFIG_FIRMWARE_INCLUDE_SMBD36=y
+          # USB Modem & PPP
+          CONFIG_USB_SERIAL=y
+          CONFIG_USB_SERIAL_OPTION=y
+          CONFIG_USB_SERIAL_WWAN=y
+          CONFIG_USB_SERIAL_QCARRIER=y
+          CONFIG_PPP=y
+          CONFIG_PPP_ASYNC=y
+          CONFIG_PPP_SYNC_TTY=y
+          CONFIG_PPP_DEFLATE=y
+          CONFIG_PPP_MPPE=y
+          CONFIG_FIRMWARE_INCLUDE_PPPD=y
+          CONFIG_FIRMWARE_INCLUDE_CHAT=y
+          EOF
+          
+          echo "Configuration appended to $CONFIG_FILE"
+
+      - name: Download and Integrate xray
         run: |
+          # 下载 xray
           XRAY_URL="https://github.com/Sun930391/padavan-4.4/raw/refs/heads/main/xray"
           wget -O /tmp/xray ${XRAY_URL}
           chmod +x /tmp/xray
-
-      - name: Modify build script to include xray
-        run: |
+          
+          # 修改编译脚本，在打包前将 xray 复制到 romfs/usr/bin/
           cd trunk
-          # 确保 sed 命令正确插入复制 xray 的指令（适配新配置名）
+          # 在 build_firmware_modify 中，于 make 命令后插入复制操作
           sed -i '/^[[:space:]]*make[[:space:]]/a \\tcp /tmp/xray $${ROMFSDIR}/usr/bin/\\n\\tchmod 755 $${ROMFSDIR}/usr/bin/xray' build_firmware_modify
           cd ..
 
-      - name: Debug board configs
+      - name: Build Firmware
         run: |
-          echo "Listing trunk/configs/boards/:"
-          ls -la trunk/configs/boards/ || echo "boards/ not exist"
-          echo "Looking for ZTE-E8820V2 subdir:"
-          ls -la trunk/configs/boards/ZTE-E8820V2/ 2>/dev/null || echo "No ZTE-E8820V2 dir"
-
-      - name: Fix kernel config if needed
-        run: |
+          # 使用 Make 命令直接编译，并指定工具链路径
+          export PATH=${TOOLCHAIN_PATH}/bin:${PATH}
           cd trunk
-          if [ ! -f configs/boards/kernel-4.4.x.config ]; then
-            echo "kernel-4.4.x.config not found, attempting to copy from ZTE-E8820V2/"
-            if [ -f configs/boards/ZTE-E8820V2/kernel.config ]; then
-              cp configs/boards/ZTE-E8820V2/kernel.config configs/boards/kernel-4.4.x.config
-              echo "Copied kernel.config to kernel-4.4.x.config"
-            elif [ -f configs/boards/ZTE-E8820V2/config ]; then
-              cp configs/boards/ZTE-E8820V2/config configs/boards/kernel-4.4.x.config
-              echo "Copied config to kernel-4.4.x.config"
-            else
-              echo "No suitable kernel config found in ZTE-E8820V2/, please check manually."
-              exit 1
-            fi
-          else
-            echo "kernel-4.4.x.config already exists."
-          fi
+          # 清理并编译（假设 Makefile 支持以 TARGET 为参数）
+          make ${{ env.TARGET_DEVICE }}
           cd ..
 
-      - name: Build firmware
+      - name: Prepare Output
         run: |
-          cd trunk
-          # 使用新的配置名作为参数
-          fakeroot ./build_firmware_modify ZTE-E8820V2
+          mkdir -p trunk/output
+          BUILD_DATE=$(TZ='Asia/Shanghai' date +%Y%m%d-%H%M)
+          BASE_NAME="${FIRMWARE_AUTHOR}-${TARGET_DEVICE}-4.4-${TOOLCHAIN}-${BUILD_DATE}"
+          i=1
+          for f in trunk/images/*.trx; do
+            if [ -f "$f" ]; then
+              suffix=""
+              [ $i -gt 1 ] && suffix="-$i"
+              mv "$f" "trunk/output/${BASE_NAME}${suffix}.trx"
+              i=$((i+1))
+            fi
+          done
 
-      - name: Upload firmware artifact
+      - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: padavan-zte-e8820v2-with-xray
-          path: trunk/images/*.trx
+          name: ${{ env.TARGET_DEVICE }}-firmware
+          path: trunk/output/*.trx
