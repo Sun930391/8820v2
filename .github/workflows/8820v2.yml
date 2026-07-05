@@ -36,6 +36,17 @@ jobs:
           sudo tar -xJf toolchain.tar.xz -C /opt/
           echo "TOOLCHAIN_PATH=/opt/${{ env.TOOLCHAIN }}" >> $GITHUB_ENV
 
+      # 新增：修复 queue.h
+      - name: Fix missing sys/queue.h
+        run: |
+          TARGET_DIR="/opt/mipsel-linux-musl/mipsel-linux-musl/sysroot/usr/include/sys"
+          sudo mkdir -p "$TARGET_DIR"
+          if [ ! -f "$TARGET_DIR/queue.h" ]; then
+            echo "Creating queue.h from system header..."
+            sudo cp /usr/include/sys/queue.h "$TARGET_DIR/" 2>/dev/null || sudo touch "$TARGET_DIR/queue.h"
+          fi
+          echo "queue.h is ready."
+
       - name: Create .config in Both Locations
         run: |
           mkdir -p trunk/configs/templates
@@ -115,7 +126,6 @@ jobs:
           export HOSTCC=/usr/bin/gcc
           export HOSTCXX=/usr/bin/g++
           export CCACHE_DISABLE=1
-          # -e 使环境变量覆盖 Makefile 中的赋值
           make -e ${{ env.TARGET_DEVICE }}
 
       - name: Prepare Output
