@@ -112,8 +112,11 @@ jobs:
       - name: Build Firmware
         run: |
           export PATH=${TOOLCHAIN_PATH}/bin:${PATH}
-          # 关键修正：强制使用系统 gcc 编译 host 工具
-          make HOSTCC=gcc HOSTCXX=g++ ${{ env.TARGET_DEVICE }}
+          export HOSTCC=/usr/bin/gcc
+          export HOSTCXX=/usr/bin/g++
+          export CCACHE_DISABLE=1
+          # -e 使环境变量覆盖 Makefile 中的赋值
+          make -e ${{ env.TARGET_DEVICE }}
 
       - name: Prepare Output
         run: |
