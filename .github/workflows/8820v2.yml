@@ -1,163 +1,243 @@
-name: Build Custom Padavan for ZTE-E8820V2
+# Build TurBoTse's Padavan 4.4 Kernel
+
+name: Custom Build
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Select router device"
+        required: true
+        type: choice
+        options:
+          - 360-T6M
+          - 360-T6M-PB
+          - B70
+          - BELL-A040WQ
+          - C-Life-XG1
+          - CR660x
+          - DIR-878
+          - DIR-882
+          - EA7500
+          - G-AX1800
+          - G-AX1800-B
+          - GHL
+          - HAR-20S2U1
+          - JCG-836PRO
+          - JCG-AC860M
+          - JCG-Q10Pro
+          - JCG-Q10Pro-PB
+          - JCG-Q11Pro
+          - JCG-Q20
+          - JCG-Q20-PB
+          - JCG-Y2
+          - JDCLOUD-RE-CP-02
+          - JDCLOUD-RE-SP-01B
+          - K2P
+          - K2P-NANO
+          - K2P-USB
+          - KOMI-A8
+          - MI-4
+          - MI-R3G
+          - MI-R3P-PB
+          - MI-R3P-SPI
+          - MI-R3P
+          - MI-R4A
+          - MR2600
+          - MSG1500
+          - MSG1500-Z
+          - NETGEAR-BZV
+          - NETGEAR-R6800
+          - NETGEAR-R7450
+          - NEWIFI
+          - NEWIFI3
+          - QM-B1
+          - R2100
+          - RM2100
+          - RT-AC85P
+          - SIM-AX1800T
+          - TX1801
+          - WDR8620
+          - WRL18M4GD
+          - WE410443-TC
+          - WIA3300-10
+          - WR1200JS
+          - XY-C1
+          - ZTE-E8820S
+          - ZTE-E8820V2
+          - ZTT-RX6000
+        default: ZTE-E8820V2
+      toolchain:
+        description: "Select compilation toolchain"
+        required: true
+        type: choice
+        options:
+          - mipsel-linux-musl
+          - mipsel-linux-uclibc
+        default: mipsel-linux-musl
+      cpufreq:
+        description: "Enable CPU Overclocking"
+        type: boolean
+        default: false
+      mt7621_oc:
+        description: "1000Mhz=0x312 1100Mhz=0x362 1120Mhz=0x372 1200Mhz=0x3B2"
+        type: choice
+        options: [ '0x312', '0x362', '0x372', '0x3B2' ]
+      plugins:
+        description: 'Plugin JSON, e.g. {"shadowsocks":"y","xray":"n"}'
+        required: true
+        type: string
+        default: '{"shadowsocks":"y","v2ray":"n","xray":"y","trojan":"y","ssobfs":"y","smartdns":"y","vlmcsd":"y","ttyd":"n","iperf3":"n"}'
+      customization:
+        description: 'Customization JSON'
+        required: true
+        type: string
+        default: '{"lanip":"192.168.2.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
+      nanoversion:
+        description: "Build Nano Version"
+        type: boolean
+        default: false
+      release:
+        description: "Upload to GitHub Release"
+        type: boolean
+        default: true
+      oldworkflow:
+        description: "Delete Old Workflows"
+        type: boolean
+        default: true
 
 env:
-  FIRMWARE_AUTHOR: YourName
-  TARGET_DEVICE: ZTE-E8820V2
-  TOOLCHAIN: mipsel-linux-musl
-  TOOLCHAIN_URL: https://github.com/TurBoTse/padavan/releases/download/toolchain/mipsel-linux-musl.tar.xz
+  FIRMWARE_AUTHOR: TurBoTse
+  TOOLCHAIN: ${{ inputs.toolchain }}
+  TOOLCHAIN_URL: https://github.com/TurBoTse/padavan/releases/download/toolchain/${{ inputs.toolchain }}.tar.xz
+  CONFIGFILE: trunk/configs/templates/${{ inputs.target }}.config
 
 jobs:
   build:
-    name: Build Firmware
+    name: Build ${{ inputs.target }}-${{ inputs.toolchain }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@main
+      - uses: actions/checkout@main
         with:
           fetch-depth: 1
+      - uses: hendrikmuhs/ccache-action@main
+        with:
+          key: ${{ inputs.target }}-${{ inputs.toolchain }}
+
+      - uses: actions/setup-go@main
+        with:
+          go-version: '1.24.x'
+          check-latest: true
+          cache: false
 
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            bison flex gperf help2man libtool-bin texinfo python3-docutils autopoint gettext \
-            autoconf automake liblzma-dev libltdl-dev liblzo2-dev jq ccache wget
+            bison flex gperf help2man libtool-bin texinfo python3-docutils autopoint gettext ccache \
+            autoconf automake liblzma-dev libltdl-dev liblzo2-dev jq
+          echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +%Y%m%d)" >> $GITHUB_ENV
 
-      - name: Prepare Toolchain
+      - name: Validate Input JSON
         run: |
-          wget -O toolchain.tar.xz ${TOOLCHAIN_URL}
-          sudo mkdir -p /opt
-          sudo tar -xJf toolchain.tar.xz -C /opt/
-          # 自动检测工具链的实际 bin 目录
-          TOOLCHAIN_BASE=$(find /opt/mipsel-linux-musl -type d -name "bin" -exec test -f {}/mipsel-linux-musl-gcc \; -print -quit 2>/dev/null || echo "")
-          if [ -n "$TOOLCHAIN_BASE" ]; then
-            REAL_ROOT=$(dirname "$TOOLCHAIN_BASE")
-            echo "REAL_TOOLCHAIN_ROOT=$REAL_ROOT" >> $GITHUB_ENV
-            echo "Found toolchain at: $REAL_ROOT"
+          jq empty <<< '${{ inputs.plugins }}' || { echo "❌ Invalid plugins JSON"; exit 1; }
+          jq empty <<< '${{ inputs.customization }}' || { echo "❌ Invalid customization JSON"; exit 1; }
+
+      - name: Export Customization & Plugin Flags
+        run: |
+          export_json() {
+            local JSON=$1
+            local PREFIX=$2
+            echo "$JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
+              echo "${PREFIX}${k^^}=$v" >> $GITHUB_ENV
+            done
+          }
+
+          export_json '${{ inputs.customization }}' ""
+          if [ "${{ inputs.nanoversion }}" = "true" ]; then
+            echo "⚠️ Nano version — all plugins disabled."
+            echo '${{ inputs.plugins }}' | jq 'with_entries(.value="n")' > plugins_fixed.json
           else
-            echo "Warning: Could not locate mipsel-linux-musl-gcc, using default path."
-            echo "REAL_TOOLCHAIN_ROOT=/opt/mipsel-linux-musl" >> $GITHUB_ENV
+            echo '${{ inputs.plugins }}' > plugins_fixed.json
           fi
-          # 设置 PATH 为实际路径
-          echo "TOOLCHAIN_PATH=${REAL_ROOT}" >> $GITHUB_ENV
+          export_json "$(cat plugins_fixed.json)" "PLUGIN_"
 
-      - name: Fix sys/queue.h
+      - name: Apply Configurations
         run: |
-          TARGET_DIR="/opt/mipsel-linux-musl/mipsel-linux-musl/sysroot/usr/include/sys"
-          sudo mkdir -p "$TARGET_DIR"
-          if [ ! -f "$TARGET_DIR/queue.h" ]; then
-            echo "Creating queue.h from system header..."
-            sudo cp /usr/include/sys/queue.h "$TARGET_DIR/" 2>/dev/null || sudo touch "$TARGET_DIR/queue.h"
-          fi
+          chmod +x trunk/custom/scripts/*.sh || true
+          bash trunk/custom/scripts/setip.sh "$LANIP" trunk/user/shared/src/defaults.h trunk/user/www/dict/CN.dict
+          bash trunk/custom/scripts/setaccount.sh "$SIGNACCOUNT" "$SIGNPASSWORD" trunk/user/shared/src/defaults.h
+          bash trunk/custom/scripts/setwifi.sh "$WIFI2GSSID" "$WIFI2GPSK" "$WIFI5GSSID" "$WIFI5GPSK" trunk/user/shared/src/defaults.h
 
-      - name: Create .config with Correct Toolchain Path
-        run: |
-          # 使用检测到的工具链根目录
-          TOOLCHAIN_ROOT="${REAL_TOOLCHAIN_ROOT:-/opt/mipsel-linux-musl}"
-          echo "Using toolchain root: $TOOLCHAIN_ROOT"
-          
-          mkdir -p trunk/configs/templates
-          TEMPLATE="trunk/configs/templates/${{ env.TARGET_DEVICE }}.config"
-          if [ ! -f "$TEMPLATE" ]; then
-            cat << EOF > "$TEMPLATE"
-          CONFIG_FIRMWARE_PRODUCT_ID=ZTE-E8820V2
-          CONFIG_LINUXDIR=linux-4.4.x
-          CONFIG_CROSS_COMPILE=mipsel-linux-musl
-          CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_ROOT
-          EOF
+          for key in $(env | grep '^PLUGIN_' | cut -d= -f1); do
+            echo "CONFIG_FIRMWARE_INCLUDE_${key#PLUGIN_}=${!key}" >> "$CONFIGFILE"
+          done
+
+          if [ "${{ inputs.cpufreq }}" = "true" ]; then
+            echo "CONFIG_FIRMWARE_INCLUDE_OC=y" >> "$CONFIGFILE"
+            echo "CONFIG_FIRMWARE_MT7621_OC=${{ inputs.mt7621_oc }}" >> "$CONFIGFILE"
           fi
 
-          cat << EOF > .config
-          CONFIG_CROSS_COMPILE=mipsel-linux-musl
-          CONFIG_CROSS_COMPILER_ROOT=$TOOLCHAIN_ROOT
-          CONFIG_LINUXDIR=linux-4.4.x
-          CONFIG_FIRMWARE_PRODUCT_ID=ZTE-E8820V2
-          CONFIG_VENDOR=Ralink
-          CONFIG_PRODUCT=MT7621
-          CONFIG_FIRMWARE_TYPE_ROOTFS_IN_RAM=n
-          CONFIG_CCACHE=n
-          CONFIG_WITHOUT_KERNEL=n
-          CONFIG_TFTPDIR=/tftpboot
-          CONFIG_FIRMWARE_PERFORM_SSTRIP=y
-          CONFIG_FIRMWARE_INCLUDE_XRAY=y
-          CONFIG_FIRMWARE_ENABLE_USB=y
-          CONFIG_USB_SUPPORT=y
-          CONFIG_USB_OHCI=y
-          CONFIG_USB_EHCI=y
-          CONFIG_USB_XHCI=y
-          CONFIG_USB_STORAGE=y
-          CONFIG_FIRMWARE_ENABLE_FAT=y
-          CONFIG_FIRMWARE_ENABLE_EXFAT=y
-          CONFIG_FIRMWARE_ENABLE_EXT2=y
-          CONFIG_FIRMWARE_ENABLE_EXT3=y
-          CONFIG_FIRMWARE_INCLUDE_NTFS_3G=y
-          CONFIG_FIRMWARE_INCLUDE_SMBD=y
-          CONFIG_USB_SERIAL=y
-          CONFIG_USB_SERIAL_OPTION=y
-          CONFIG_USB_SERIAL_WWAN=y
-          CONFIG_USB_SERIAL_QCARRIER=y
-          CONFIG_PPP=y
-          CONFIG_PPP_ASYNC=y
-          CONFIG_PPP_SYNC_TTY=y
-          CONFIG_PPP_DEFLATE=y
-          CONFIG_PPP_MPPE=y
-          CONFIG_FIRMWARE_INCLUDE_PPPD=y
-          CONFIG_FIRMWARE_INCLUDE_CHAT=y
-          CONFIG_FIRMWARE_ENABLE_IPV6=y
-          CONFIG_FIRMWARE_INCLUDE_LANG_CN=y
-          CONFIG_FIRMWARE_INCLUDE_EAP_PEAP=y
-          CONFIG_FIRMWARE_INCLUDE_HTTPS=y
-          CONFIG_FIRMWARE_INCLUDE_DROPBEAR=y
-          CONFIG_FIRMWARE_INCLUDE_DROPBEAR_FAST_CODE=y
-          CONFIG_FIRMWARE_INCLUDE_OPENSSL_EC=y
-          CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
-          CONFIG_FIRMWARE_INCLUDE_CURL=y
-          CONFIG_FIRMWARE_INCLUDE_VLMCSD=y
-          CONFIG_FIRMWARE_INCLUDE_TTYD=y
-          CONFIG_FIRMWARE_INCLUDE_MSD_LITE=y
-          CONFIG_FIRMWARE_INCLUDE_IPERF3=y
-          CONFIG_FIRMWARE_INCLUDE_IPSET=y
-          CONFIG_FIRMWARE_INCLUDE_SFE=y
-          EOF
-          cp .config trunk/.config
-
-      - name: Run Configure Script
+      - name: Apply Nano Optimization
+        if: ${{ inputs.nanoversion }}
         run: |
-          cd trunk
-          ./configure
-          cd ..
+          for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
+            sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/" "$CONFIGFILE"
+          done
+          modules=(UVC HID SERIAL AUDIO XFRM QOS IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC TCPDUMP HDPARM PARTED 
+            SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP HTTPS SFTP DROPBEAR DROPBEAR_FAST_CODE OPENSSH OPENVPN SSWAN 
+            OPENSSL_EC OPENSSL_EXE XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA 
+            ARIA_WEB_CONTROL CURL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT 
+            SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST 
+            FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS 
+            ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD )
+          for m in "${modules[@]}"; do
+            sed -i "s/CONFIG_FIRMWARE_INCLUDE_${m}=y/CONFIG_FIRMWARE_INCLUDE_${m}=n/" "$CONFIGFILE"
+          done
 
       - name: Build Firmware
         run: |
-          export PATH=${TOOLCHAIN_PATH}/bin:${PATH}
-          export HOSTCC=/usr/bin/gcc
-          export HOSTCXX=/usr/bin/g++
-          export CCACHE_DISABLE=1
-          make -e ${{ env.TARGET_DEVICE }}
-
-      - name: Prepare Output
-        run: |
+          make ${{ inputs.target }} TOOLCHAIN=${{ inputs.toolchain }}
           mkdir -p trunk/output
-          BUILD_DATE=$(TZ='Asia/Shanghai' date +%Y%m%d-%H%M)
-          BASE_NAME="${FIRMWARE_AUTHOR}-${TARGET_DEVICE}-4.4-${TOOLCHAIN}-${BUILD_DATE}"
+          base="${FIRMWARE_AUTHOR}-${{ inputs.target }}-4.4-${{ inputs.toolchain }}"
+          [ "${{ inputs.nanoversion }}" = "true" ] && base="${base}-nano"
+          [ "${{ inputs.cpufreq }}" = "true" ] && base="${base}-cpufreq-${{ inputs.mt7621_oc }}"
+          base="${base}-${BUILD_DATE}"
           i=1
           for f in trunk/images/*.trx; do
-            if [ -f "$f" ]; then
-              suffix=""
-              [ $i -gt 1 ] && suffix="-$i"
-              mv "$f" "trunk/output/${BASE_NAME}${suffix}.trx"
-              i=$((i+1))
-            fi
+            suffix=""
+            [ $i -gt 1 ] && suffix="-$i"
+            mv "$f" "trunk/output/${base}${suffix}.trx"
+            i=$((i+1))
           done
 
-      - name: Upload Firmware Artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@main
         with:
-          name: ${{ env.TARGET_DEVICE }}-firmware
+          name: ${{ inputs.target }}-${{ inputs.toolchain }}-${{ env.BUILD_DATE }}
           path: trunk/output/*.trx
+
+      - uses: softprops/action-gh-release@master
+        if: ${{ inputs.release }}
+        with:
+          tag_name: ${{ env.BUILD_DATE }}
+          name: ${{ env.BUILD_DATE }}
+          body: |
+            Build Summary:
+            - Date: ${{ env.BUILD_DATE }}
+            - Target: ${{ inputs.target }}
+            - Toolchain: ${{ inputs.toolchain }}
+            - Nano: ${{ inputs.nanoversion }}
+            - CPU OC: ${{ inputs.cpufreq }} (${{ inputs.mt7621_oc }})
+            - Plugins: ${{ inputs.plugins }}
+            - Custom: ${{ inputs.customization }}
+          files: trunk/output/*.trx
+
+      - uses: Mattraks/delete-workflow-runs@main
+        if: ${{ inputs.oldworkflow }}
+        with:
+          retain_days: 0
+          keep_minimum_runs: 1
