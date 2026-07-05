@@ -199,6 +199,22 @@ jobs:
             sed -i "s/CONFIG_FIRMWARE_INCLUDE_${m}=y/CONFIG_FIRMWARE_INCLUDE_${m}=n/" "$CONFIGFILE"
           done
 
+      # ===== 新增：手动下载 lzma 工具 =====
+      - name: Download missing lzma tool from MacPorts mirror
+        run: |
+          mkdir -p trunk/download
+          cd trunk/download
+          # 如果文件已存在则跳过下载
+          if [ ! -f "lzma2409.7z" ]; then
+            echo "Downloading lzma2409.7z from MacPorts mirror..."
+            wget -O lzma2409.7z https://vie.at.distfiles.macports.org/lzma/lzma2409.7z || \
+            wget -O lzma2409.7z https://nue.de.distfiles.macports.org/lzma/lzma2409.7z || \
+            wget -O lzma2409.7z https://mirror.bytz.net/macports/distfiles/lzma/lzma2409.7z
+            ls -lh lzma2409.7z
+          else
+            echo "lzma2409.7z already exists."
+          fi
+
       - name: Build Firmware
         run: |
           make ${{ inputs.target }} TOOLCHAIN=${{ inputs.toolchain }}
