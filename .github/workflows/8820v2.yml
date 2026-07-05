@@ -36,28 +36,61 @@ jobs:
           sudo tar -xJf toolchain.tar.xz -C /opt/
           echo "TOOLCHAIN_PATH=/opt/${{ env.TOOLCHAIN }}" >> $GITHUB_ENV
 
-      - name: Customize Configuration Template (Enable USB, Modem, PPP & xray)
+      - name: Create .config Manually (Complete)
         run: |
-          CONFIG_FILE="trunk/configs/templates/${{ env.TARGET_DEVICE }}.config"
-          
-          if [ ! -f "$CONFIG_FILE" ]; then
-            echo "Error: Configuration file $CONFIG_FILE not found!"
-            exit 1
+          # 从模板文件读取基础配置（如果存在），否则使用完整定义
+          TEMPLATE="trunk/configs/templates/${{ env.TARGET_DEVICE }}.config"
+          if [ -f "$TEMPLATE" ]; then
+            echo "Using template $TEMPLATE as base..."
+            cp "$TEMPLATE" .config
+          else
+            echo "Warning: Template not found, creating from scratch..."
+            cat << 'EOF' > .config
+          # 关键变量 - configure 脚本依赖这些
+          CONFIG_CROSS_COMPILE=mipsel-linux-musl
+          CONFIG_CROSS_COMPILER_ROOT=/opt/mipsel-linux-musl
+          CONFIG_LINUXDIR=linux-4.4.x
+          CONFIG_FIRMWARE_PRODUCT_ID=ZTE-E8820V2
+          CONFIG_VENDOR=Ralink
+          CONFIG_PRODUCT=MT7621
+          CONFIG_FIRMWARE_TYPE_ROOTFS_IN_RAM=n
+          CONFIG_CCACHE=n
+          CONFIG_WITHOUT_KERNEL=n
+          CONFIG_TFTPDIR=/tftpboot
+          CONFIG_FIRMWARE_PERFORM_SSTRIP=y
+          EOF
           fi
 
-          cat << EOF >> "$CONFIG_FILE"
-          # xray (built-in)
+          # 追加所有您需要的功能配置（覆盖模板中的旧值）
+          cat << 'EOF' >> .config
+          # ===== 核心配置 =====
+          CONFIG_FIRMWARE_PRODUCT_ID=ZTE-E8820V2
+          CONFIG_LINUXDIR=linux-4.4.x
+          CONFIG_CROSS_COMPILE=mipsel-linux-musl
+          CONFIG_CROSS_COMPILER_ROOT=/opt/mipsel-linux-musl
+
+          # ===== xray (内置) =====
           CONFIG_FIRMWARE_INCLUDE_XRAY=y
-          # USB Storage Support
+
+          # ===== USB 存储支持 =====
+          CONFIG_FIRMWARE_ENABLE_USB=y
           CONFIG_USB_SUPPORT=y
           CONFIG_USB_OHCI=y
           CONFIG_USB_EHCI=y
           CONFIG_USB_XHCI=y
           CONFIG_USB_STORAGE=y
+          CONFIG_FIRMWARE_ENABLE_FAT=y
+          CONFIG_FIRMWARE_ENABLE_EXFAT=y
+          CONFIG_FIRMWARE_ENABLE_EXT2=y
+          CONFIG_FIRMWARE_ENABLE_EXT3=y
           CONFIG_FIRMWARE_INCLUDE_NTFS_3G=y
-          CONFIG_FIRMWARE_INCLUDE_EXFAT=y
-          CONFIG_FIRMWARE_INCLUDE_SMBD36=y
-          # USB Modem & PPP
+          CONFIG_FIRMWARE_INCLUDE_SMBD=y
+          CONFIG_FIRMWARE_INCLUDE_LPRD=y
+          CONFIG_FIRMWARE_INCLUDE_TCPDUMP=y
+          CONFIG_FIRMWARE_INCLUDE_HDPARM=y
+          CONFIG_FIRMWARE_INCLUDE_PARTED=y
+
+          # ===== USB 调制解调器 & PPP 拨号 =====
           CONFIG_USB_SERIAL=y
           CONFIG_USB_SERIAL_OPTION=y
           CONFIG_USB_SERIAL_WWAN=y
@@ -69,33 +102,41 @@ jobs:
           CONFIG_PPP_MPPE=y
           CONFIG_FIRMWARE_INCLUDE_PPPD=y
           CONFIG_FIRMWARE_INCLUDE_CHAT=y
+
+          # ===== 其他您可能需要 =====
+          CONFIG_FIRMWARE_ENABLE_IPV6=y
+          CONFIG_FIRMWARE_INCLUDE_LANG_CN=y
+          CONFIG_FIRMWARE_INCLUDE_EAP_PEAP=y
+          CONFIG_FIRMWARE_INCLUDE_HTTPS=y
+          CONFIG_FIRMWARE_INCLUDE_DROPBEAR=y
+          CONFIG_FIRMWARE_INCLUDE_DROPBEAR_FAST_CODE=y
+          CONFIG_FIRMWARE_INCLUDE_OPENSSL_EC=y
+          CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y
+          CONFIG_FIRMWARE_INCLUDE_CURL=y
+          CONFIG_FIRMWARE_INCLUDE_VLMCSD=y
+          CONFIG_FIRMWARE_INCLUDE_TTYD=y
+          CONFIG_FIRMWARE_INCLUDE_MSD_LITE=y
+          CONFIG_FIRMWARE_INCLUDE_IPERF3=y
+          CONFIG_FIRMWARE_INCLUDE_IPSET=y
+          CONFIG_FIRMWARE_INCLUDE_SFE=y
           EOF
 
-      - name: Ensure Board Kernel Config Exists
+          echo ".config created with all required settings."
+          echo "=== First 20 lines of .config ==="
+          head -n 20 .config
+
+      - name: Run Configure Script (Now it should work)
         run: |
-          BOARD_DIR="trunk/configs/boards/${{ env.TARGET_DEVICE }}"
-          if [ ! -d "$BOARD_DIR" ]; then
-            echo "Board directory $BOARD_DIR not found, creating from K2P template..."
-            mkdir -p "$BOARD_DIR"
-            # 复制 K2P 的内核配置（如果存在）
-            if [ -f "trunk/configs/boards/K2P/kernel.config" ]; then
-              cp trunk/configs/boards/K2P/kernel.config "$BOARD_DIR/kernel.config"
-            elif [ -f "trunk/configs/boards/K2P/config" ]; then
-              cp trunk/configs/boards/K2P/config "$BOARD_DIR/config"
-            else
-              echo "Warning: No template kernel config found, creating empty file to bypass error."
-              touch "$BOARD_DIR/kernel.config"
-            fi
-          else
-            echo "Board directory $BOARD_DIR exists."
-          fi
+          cd trunk
+          # configure 脚本现在可以读取 .config 了
+          ./configure
+          cd ..
 
       - name: Build Firmware
         run: |
           export PATH=${TOOLCHAIN_PATH}/bin:${PATH}
-          cd trunk
+          # 在根目录运行 make，它会自动 include .config
           make ${{ env.TARGET_DEVICE }}
-          cd ..
 
       - name: Prepare Output
         run: |
