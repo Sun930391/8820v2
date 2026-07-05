@@ -36,17 +36,25 @@ jobs:
           sudo tar -xJf toolchain.tar.xz -C /opt/
           echo "TOOLCHAIN_PATH=/opt/${{ env.TOOLCHAIN }}" >> $GITHUB_ENV
 
-      - name: Create .config Manually (Complete)
+      - name: Create .config in Both Locations
         run: |
-          # 从模板文件读取基础配置（如果存在），否则使用完整定义
+          # 确保模板目录存在
+          mkdir -p trunk/configs/templates
           TEMPLATE="trunk/configs/templates/${{ env.TARGET_DEVICE }}.config"
-          if [ -f "$TEMPLATE" ]; then
-            echo "Using template $TEMPLATE as base..."
-            cp "$TEMPLATE" .config
-          else
-            echo "Warning: Template not found, creating from scratch..."
-            cat << 'EOF' > .config
-          # 关键变量 - configure 脚本依赖这些
+          if [ ! -f "$TEMPLATE" ]; then
+            echo "Creating template $TEMPLATE"
+            cat << 'EOF' > "$TEMPLATE"
+          # Basic template for ZTE-E8820V2
+          CONFIG_FIRMWARE_PRODUCT_ID=ZTE-E8820V2
+          CONFIG_LINUXDIR=linux-4.4.x
+          CONFIG_CROSS_COMPILE=mipsel-linux-musl
+          CONFIG_CROSS_COMPILER_ROOT=/opt/mipsel-linux-musl
+          EOF
+          fi
+
+          # 生成根目录的 .config（Makefile 需要）
+          cat << 'EOF' > .config
+          # 关键变量 - 必须定义，否则 configure 会报错
           CONFIG_CROSS_COMPILE=mipsel-linux-musl
           CONFIG_CROSS_COMPILER_ROOT=/opt/mipsel-linux-musl
           CONFIG_LINUXDIR=linux-4.4.x
@@ -58,21 +66,9 @@ jobs:
           CONFIG_WITHOUT_KERNEL=n
           CONFIG_TFTPDIR=/tftpboot
           CONFIG_FIRMWARE_PERFORM_SSTRIP=y
-          EOF
-          fi
 
-          # 追加所有您需要的功能配置（覆盖模板中的旧值）
-          cat << 'EOF' >> .config
-          # ===== 核心配置 =====
-          CONFIG_FIRMWARE_PRODUCT_ID=ZTE-E8820V2
-          CONFIG_LINUXDIR=linux-4.4.x
-          CONFIG_CROSS_COMPILE=mipsel-linux-musl
-          CONFIG_CROSS_COMPILER_ROOT=/opt/mipsel-linux-musl
-
-          # ===== xray (内置) =====
+          # 功能选项（USB、PPP、xray 等）
           CONFIG_FIRMWARE_INCLUDE_XRAY=y
-
-          # ===== USB 存储支持 =====
           CONFIG_FIRMWARE_ENABLE_USB=y
           CONFIG_USB_SUPPORT=y
           CONFIG_USB_OHCI=y
@@ -85,12 +81,6 @@ jobs:
           CONFIG_FIRMWARE_ENABLE_EXT3=y
           CONFIG_FIRMWARE_INCLUDE_NTFS_3G=y
           CONFIG_FIRMWARE_INCLUDE_SMBD=y
-          CONFIG_FIRMWARE_INCLUDE_LPRD=y
-          CONFIG_FIRMWARE_INCLUDE_TCPDUMP=y
-          CONFIG_FIRMWARE_INCLUDE_HDPARM=y
-          CONFIG_FIRMWARE_INCLUDE_PARTED=y
-
-          # ===== USB 调制解调器 & PPP 拨号 =====
           CONFIG_USB_SERIAL=y
           CONFIG_USB_SERIAL_OPTION=y
           CONFIG_USB_SERIAL_WWAN=y
@@ -102,8 +92,6 @@ jobs:
           CONFIG_PPP_MPPE=y
           CONFIG_FIRMWARE_INCLUDE_PPPD=y
           CONFIG_FIRMWARE_INCLUDE_CHAT=y
-
-          # ===== 其他您可能需要 =====
           CONFIG_FIRMWARE_ENABLE_IPV6=y
           CONFIG_FIRMWARE_INCLUDE_LANG_CN=y
           CONFIG_FIRMWARE_INCLUDE_EAP_PEAP=y
@@ -121,21 +109,20 @@ jobs:
           CONFIG_FIRMWARE_INCLUDE_SFE=y
           EOF
 
-          echo ".config created with all required settings."
-          echo "=== First 20 lines of .config ==="
-          head -n 20 .config
+          # 复制到 trunk/ 目录（configure 脚本需要）
+          cp .config trunk/.config
+          echo ".config created in both root and trunk/"
 
-      - name: Run Configure Script (Now it should work)
+      - name: Run Configure Script (Now .config exists in trunk/)
         run: |
           cd trunk
-          # configure 脚本现在可以读取 .config 了
           ./configure
           cd ..
 
       - name: Build Firmware
         run: |
           export PATH=${TOOLCHAIN_PATH}/bin:${PATH}
-          # 在根目录运行 make，它会自动 include .config
+          # Makefile 会读取根目录的 .config
           make ${{ env.TARGET_DEVICE }}
 
       - name: Prepare Output
